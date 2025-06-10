@@ -1,0 +1,33 @@
+name: RemoteSmelter
+version: '1.0'
+main: com.Lino.remoteSmelter.RemoteSmelter
+api-version: '1.21'
+description: Intuitive plugin that allows players to register and access smelters remotely
+softdepend: [Vault]
+
+commands:
+  remotesmelter:
+    description: Main command for RemoteSmelter
+    aliases: [rs]
+    usage: /<command> [create|view|limit|cost|config]
+
+permissions:
+  remotesmelter.use:
+    description: Allows basic usage of RemoteSmelter
+    default: true
+
+  remotesmelter.admin:
+    description: Allows access to admin commands
+    default: op
+
+  remotesmelter.group.default:
+    description: Default group with 5 smelter limit
+    default: true
+
+  remotesmelter.group.vip:
+    description: VIP group with 10 smelter limit
+    default: false
+
+  remotesmelter.group.admin:
+    description: Admin group with unlimited smelters
+    default: op

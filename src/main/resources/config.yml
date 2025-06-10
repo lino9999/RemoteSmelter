@@ -1,0 +1,10 @@
+economy:
+  enabled: true
+  creation-cost: 10000.0
+
+groups:
+  default: 5
+  vip: 10
+  admin: -1
+
+smelters: {}
