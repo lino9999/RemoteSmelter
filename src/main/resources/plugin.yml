@@ -2,6 +2,7 @@ name: RemoteSmelter
 version: '1.0'
 main: com.Lino.remoteSmelter.RemoteSmelter
 api-version: '1.21'
+author: Lino
 description: Intuitive plugin that allows players to register and access smelters remotely
 softdepend: [Vault]
 
