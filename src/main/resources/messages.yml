@@ -1,0 +1,86 @@
+commands:
+  player-only: "&cThis command can only be used by players!"
+  help:
+    header: "&6=== RemoteSmelter Commands ==="
+    create: "&e/remotesmelter create <name> &f- Register a furnace"
+    view: "&e/remotesmelter view &f- Open smelter GUI"
+    limit: "&e/remotesmelter limit &f- View your smelter limit"
+    cost: "&e/remotesmelter cost &f- View creation cost"
+    config: "&e/remotesmelter config &f- Open config GUI"
+
+  create:
+    usage: "&cUsage: /remotesmelter create <name>"
+    not-furnace: "&cYou must be looking at a furnace, blast furnace, or smoker!"
+    name-exists: "&cYou already have a smelter with that name!"
+    limit-reached: "&cYou have reached your smelter limit!"
+    already-registered: "&cThis furnace is already registered!"
+    insufficient-funds: "&cYou need ${COST} to create a smelter!"
+    funds-deducted: "&a${COST} has been deducted from your account."
+    success: "&aSmelter '{NAME}' created successfully!"
+
+  view:
+    no-smelters: "&cYou don't have any registered smelters!"
+    gui-title: "&2Your Smelters"
+
+  limit:
+    unlimited: "&aYou have unlimited smelters! Current: {CURRENT}"
+    limited: "&aSmelter limit: {CURRENT}/{LIMIT}"
+
+  cost:
+    display: "&aCost to create a smelter: &6${COST}"
+
+  config:
+    no-permission: "&cYou don't have permission to use this command!"
+    reloaded: "&aConfiguration reloaded!"
+    gui-title: "&5RemoteSmelter Config"
+    saved: "&aConfiguration saved!"
+    groups-gui-title: "&3Group Limits"
+    set-cost-prompt: "&aType the new smelter cost in chat (current: ${COST}):"
+    add-group-prompt: "&aType the name of the new group in chat:"
+    group-created: "&aGroup '{NAME}' created with limit 5!"
+    group-exists: "&cGroup already exists!"
+    group-name-empty: "&cGroup name cannot be empty!"
+    cost-negative: "&cCost cannot be negative!"
+    cost-set: "&aSmelter cost set to ${COST}"
+    invalid-number: "&cInvalid number! Please enter a valid cost."
+
+smelter:
+  deleted: "&cSmelter '{NAME}' deleted!"
+  destroyed: "&cYour smelter '{NAME}' has been destroyed!"
+  not-exists: "&cThe furnace no longer exists!"
+
+gui:
+  location: "&7Location: {X}, {Y}, {Z}"
+  world: "&7World: {WORLD}"
+  status: "&eStatus: {STATUS}"
+  status-active: "&aActive"
+  status-inactive: "&cInactive"
+  click-access: "&eClick to access"
+  shift-delete: "&cShift-click to delete"
+
+  economy:
+    title: "&6Economy Settings"
+    enabled: "&7Enabled: {STATUS}"
+    enabled-yes: "&aYes"
+    enabled-no: "&cNo"
+    cost: "&7Cost: &6${COST}"
+    click-toggle: "&eClick to toggle"
+    right-click-cost: "&eRight-click to set cost"
+
+  groups:
+    title: "&bGroup Limits"
+    description: "&7Manage group limits"
+    click-open: "&eClick to open"
+    limit: "&7Limit: {LIMIT}"
+    limit-unlimited: "&aUnlimited"
+    left-increase: "&eLeft-click to increase"
+    right-decrease: "&eRight-click to decrease"
+    shift-delete: "&cShift-click to delete"
+    add-new: "&aAdd New Group"
+
+  save:
+    title: "&aSave Configuration"
+
+error:
+  vault-not-found: "Vault not found! Economy features disabled."
+  database-error: "&cDatabase error occurred! Please contact an administrator."
