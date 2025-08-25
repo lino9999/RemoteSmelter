@@ -1,5 +1,5 @@
 name: RemoteSmelter
-version: '1.0'
+version: '1.2'
 main: com.Lino.remoteSmelter.RemoteSmelter
 api-version: '1.21'
 author: Lino

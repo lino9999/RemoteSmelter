@@ -17,6 +17,7 @@ import org.bukkit.plugin.RegisteredServiceProvider;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
 
+import java.sql.SQLException;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
@@ -24,6 +25,8 @@ import java.util.stream.Collectors;
 public class RemoteSmelter extends JavaPlugin implements Listener, CommandExecutor, TabCompleter {
 
     private Economy economy;
+    private DatabaseManager databaseManager;
+    private MessageManager messageManager;
     private final Map<UUID, Map<String, SmelterData>> playerSmelters = new ConcurrentHashMap<>();
     private final Map<UUID, String> viewingPlayer = new HashMap<>();
     private final Map<String, Integer> groupLimits = new HashMap<>();
@@ -35,10 +38,24 @@ public class RemoteSmelter extends JavaPlugin implements Listener, CommandExecut
     @Override
     public void onEnable() {
         saveDefaultConfig();
+        saveResource("messages.yml", false);
+
+        messageManager = new MessageManager(this);
+        databaseManager = new DatabaseManager(this);
+
+        try {
+            databaseManager.initialize();
+        } catch (SQLException e) {
+            getLogger().severe(messageManager.getMessage("error.database-error"));
+            e.printStackTrace();
+            getServer().getPluginManager().disablePlugin(this);
+            return;
+        }
+
         loadConfig();
 
         if (useEconomy && !setupEconomy()) {
-            getLogger().severe("Vault not found! Economy features disabled.");
+            getLogger().severe(messageManager.getMessage("error.vault-not-found"));
             useEconomy = false;
         }
 
@@ -46,7 +63,7 @@ public class RemoteSmelter extends JavaPlugin implements Listener, CommandExecut
         getCommand("remotesmelter").setExecutor(this);
         getCommand("remotesmelter").setTabCompleter(this);
 
-        loadSmelters();
+        playerSmelters.putAll(databaseManager.loadAllSmelters());
 
         new BukkitRunnable() {
             @Override
@@ -58,7 +75,9 @@ public class RemoteSmelter extends JavaPlugin implements Listener, CommandExecut
 
     @Override
     public void onDisable() {
-        saveSmelters();
+        if (databaseManager != null) {
+            databaseManager.close();
+        }
     }
 
     private boolean setupEconomy() {
@@ -106,56 +125,10 @@ public class RemoteSmelter extends JavaPlugin implements Listener, CommandExecut
         saveConfig();
     }
 
-    private void loadSmelters() {
-        FileConfiguration config = getConfig();
-        ConfigurationSection smelters = config.getConfigurationSection("smelters");
-        if (smelters == null) return;
-
-        for (String uuidStr : smelters.getKeys(false)) {
-            UUID uuid = UUID.fromString(uuidStr);
-            Map<String, SmelterData> playerData = new HashMap<>();
-
-            ConfigurationSection playerSection = smelters.getConfigurationSection(uuidStr);
-            for (String name : playerSection.getKeys(false)) {
-                ConfigurationSection smelterSection = playerSection.getConfigurationSection(name);
-                Location loc = new Location(
-                        Bukkit.getWorld(smelterSection.getString("world")),
-                        smelterSection.getInt("x"),
-                        smelterSection.getInt("y"),
-                        smelterSection.getInt("z")
-                );
-
-                SmelterData data = new SmelterData(name, loc);
-                playerData.put(name, data);
-            }
-
-            playerSmelters.put(uuid, playerData);
-        }
-    }
-
-    private void saveSmelters() {
-        FileConfiguration config = getConfig();
-        config.set("smelters", null);
-
-        for (Map.Entry<UUID, Map<String, SmelterData>> entry : playerSmelters.entrySet()) {
-            String uuidStr = entry.getKey().toString();
-            for (Map.Entry<String, SmelterData> smelterEntry : entry.getValue().entrySet()) {
-                SmelterData data = smelterEntry.getValue();
-                String path = "smelters." + uuidStr + "." + data.name;
-                config.set(path + ".world", data.location.getWorld().getName());
-                config.set(path + ".x", data.location.getBlockX());
-                config.set(path + ".y", data.location.getBlockY());
-                config.set(path + ".z", data.location.getBlockZ());
-            }
-        }
-
-        saveConfig();
-    }
-
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (!(sender instanceof Player)) {
-            sender.sendMessage("This command can only be used by players!");
+            sender.sendMessage(messageManager.getMessage("commands.player-only"));
             return true;
         }
 
@@ -169,7 +142,7 @@ public class RemoteSmelter extends JavaPlugin implements Listener, CommandExecut
         switch (args[0].toLowerCase()) {
             case "create":
                 if (args.length < 2) {
-                    player.sendMessage(ChatColor.RED + "Usage: /remotesmelter create <name>");
+                    messageManager.sendMessage(player, "commands.create.usage");
                     return true;
                 }
                 createSmelter(player, args[1]);
@@ -184,18 +157,19 @@ public class RemoteSmelter extends JavaPlugin implements Listener, CommandExecut
                 break;
 
             case "cost":
-                player.sendMessage(ChatColor.GREEN + "Cost to create a smelter: " + ChatColor.GOLD + "$" + smelterCost);
+                messageManager.sendMessage(player, "commands.cost.display", "{COST}", String.valueOf(smelterCost));
                 break;
 
             case "config":
                 if (!player.hasPermission("remotesmelter.admin")) {
-                    player.sendMessage(ChatColor.RED + "You don't have permission to use this command!");
+                    messageManager.sendMessage(player, "commands.config.no-permission");
                     return true;
                 }
                 if (args.length > 1 && args[1].equalsIgnoreCase("reload")) {
                     reloadConfig();
                     loadConfig();
-                    player.sendMessage(ChatColor.GREEN + "Configuration reloaded!");
+                    messageManager.reload();
+                    messageManager.sendMessage(player, "commands.config.reloaded");
                 } else {
                     openConfigGUI(player);
                 }
@@ -226,13 +200,13 @@ public class RemoteSmelter extends JavaPlugin implements Listener, CommandExecut
     }
 
     private void sendHelp(Player player) {
-        player.sendMessage(ChatColor.GOLD + "=== RemoteSmelter Commands ===");
-        player.sendMessage(ChatColor.YELLOW + "/remotesmelter create <name>" + ChatColor.WHITE + " - Register a furnace");
-        player.sendMessage(ChatColor.YELLOW + "/remotesmelter view" + ChatColor.WHITE + " - Open smelter GUI");
-        player.sendMessage(ChatColor.YELLOW + "/remotesmelter limit" + ChatColor.WHITE + " - View your smelter limit");
-        player.sendMessage(ChatColor.YELLOW + "/remotesmelter cost" + ChatColor.WHITE + " - View creation cost");
+        player.sendMessage(messageManager.getMessage("commands.help.header"));
+        player.sendMessage(messageManager.getMessage("commands.help.create"));
+        player.sendMessage(messageManager.getMessage("commands.help.view"));
+        player.sendMessage(messageManager.getMessage("commands.help.limit"));
+        player.sendMessage(messageManager.getMessage("commands.help.cost"));
         if (player.hasPermission("remotesmelter.admin")) {
-            player.sendMessage(ChatColor.YELLOW + "/remotesmelter config" + ChatColor.WHITE + " - Open config GUI");
+            player.sendMessage(messageManager.getMessage("commands.help.config"));
         }
     }
 
@@ -240,45 +214,42 @@ public class RemoteSmelter extends JavaPlugin implements Listener, CommandExecut
         Block block = player.getTargetBlock(null, 5);
 
         if (!(block.getState() instanceof Furnace)) {
-            player.sendMessage(ChatColor.RED + "You must be looking at a furnace, blast furnace, or smoker!");
+            messageManager.sendMessage(player, "commands.create.not-furnace");
             return;
         }
 
         UUID uuid = player.getUniqueId();
         Map<String, SmelterData> smelters = playerSmelters.computeIfAbsent(uuid, k -> new HashMap<>());
 
-        if (smelters.containsKey(name)) {
-            player.sendMessage(ChatColor.RED + "You already have a smelter with that name!");
+        if (databaseManager.smelterExists(uuid, name)) {
+            messageManager.sendMessage(player, "commands.create.name-exists");
             return;
         }
 
         int limit = getPlayerLimit(player);
         if (limit != -1 && smelters.size() >= limit) {
-            player.sendMessage(ChatColor.RED + "You have reached your smelter limit!");
+            messageManager.sendMessage(player, "commands.create.limit-reached");
             return;
         }
 
-        for (Map<String, SmelterData> playerData : playerSmelters.values()) {
-            for (SmelterData data : playerData.values()) {
-                if (data.location.equals(block.getLocation())) {
-                    player.sendMessage(ChatColor.RED + "This furnace is already registered!");
-                    return;
-                }
-            }
+        if (databaseManager.isLocationRegistered(block.getLocation())) {
+            messageManager.sendMessage(player, "commands.create.already-registered");
+            return;
         }
 
         if (useEconomy && economy != null && smelterCost > 0) {
             if (!economy.has(player, smelterCost)) {
-                player.sendMessage(ChatColor.RED + "You need $" + smelterCost + " to create a smelter!");
+                messageManager.sendMessage(player, "commands.create.insufficient-funds", "{COST}", String.valueOf(smelterCost));
                 return;
             }
             economy.withdrawPlayer(player, smelterCost);
-            player.sendMessage(ChatColor.GREEN + "$" + smelterCost + " has been deducted from your account.");
+            messageManager.sendMessage(player, "commands.create.funds-deducted", "{COST}", String.valueOf(smelterCost));
         }
 
-        smelters.put(name, new SmelterData(name, block.getLocation()));
-        player.sendMessage(ChatColor.GREEN + "Smelter '" + name + "' created successfully!");
-        saveSmelters();
+        if (databaseManager.addSmelter(uuid, name, block.getLocation())) {
+            smelters.put(name, new SmelterData(name, block.getLocation()));
+            messageManager.sendMessage(player, "commands.create.success", "{NAME}", name);
+        }
     }
 
     private int getPlayerLimit(Player player) {
@@ -295,9 +266,11 @@ public class RemoteSmelter extends JavaPlugin implements Listener, CommandExecut
         int current = playerSmelters.getOrDefault(player.getUniqueId(), Collections.emptyMap()).size();
 
         if (limit == -1) {
-            player.sendMessage(ChatColor.GREEN + "You have unlimited smelters! Current: " + current);
+            messageManager.sendMessage(player, "commands.limit.unlimited", "{CURRENT}", String.valueOf(current));
         } else {
-            player.sendMessage(ChatColor.GREEN + "Smelter limit: " + current + "/" + limit);
+            messageManager.sendMessage(player, "commands.limit.limited",
+                    "{CURRENT}", String.valueOf(current),
+                    "{LIMIT}", String.valueOf(limit));
         }
     }
 
@@ -305,12 +278,12 @@ public class RemoteSmelter extends JavaPlugin implements Listener, CommandExecut
         Map<String, SmelterData> smelters = playerSmelters.get(player.getUniqueId());
 
         if (smelters == null || smelters.isEmpty()) {
-            player.sendMessage(ChatColor.RED + "You don't have any registered smelters!");
+            messageManager.sendMessage(player, "commands.view.no-smelters");
             return;
         }
 
         int size = Math.min(54, ((smelters.size() - 1) / 9 + 1) * 9);
-        Inventory gui = Bukkit.createInventory(null, size, ChatColor.DARK_GREEN + "Your Smelters");
+        Inventory gui = Bukkit.createInventory(null, size, messageManager.getMessage("commands.view.gui-title"));
 
         int slot = 0;
         for (Map.Entry<String, SmelterData> entry : smelters.entrySet()) {
@@ -328,19 +301,20 @@ public class RemoteSmelter extends JavaPlugin implements Listener, CommandExecut
 
             meta.setDisplayName(ChatColor.GREEN + data.name);
             List<String> lore = new ArrayList<>();
-            lore.add(ChatColor.GRAY + "Location: " + data.location.getBlockX() + ", " +
-                    data.location.getBlockY() + ", " + data.location.getBlockZ());
-            lore.add(ChatColor.GRAY + "World: " + data.location.getWorld().getName());
+            lore.add(messageManager.getMessage("gui.location",
+                    "{X}", String.valueOf(data.location.getBlockX()),
+                    "{Y}", String.valueOf(data.location.getBlockY()),
+                    "{Z}", String.valueOf(data.location.getBlockZ())));
+            lore.add(messageManager.getMessage("gui.world", "{WORLD}", data.location.getWorld().getName()));
 
-            if (furnace.getBurnTime() > 0) {
-                lore.add(ChatColor.YELLOW + "Status: " + ChatColor.GREEN + "Active");
-            } else {
-                lore.add(ChatColor.YELLOW + "Status: " + ChatColor.RED + "Inactive");
-            }
+            String status = furnace.getBurnTime() > 0 ?
+                    messageManager.getMessage("gui.status-active") :
+                    messageManager.getMessage("gui.status-inactive");
+            lore.add(messageManager.getMessage("gui.status", "{STATUS}", status));
 
             lore.add("");
-            lore.add(ChatColor.YELLOW + "Click to access");
-            lore.add(ChatColor.RED + "Shift-click to delete");
+            lore.add(messageManager.getMessage("gui.click-access"));
+            lore.add(messageManager.getMessage("gui.shift-delete"));
 
             meta.setLore(lore);
             item.setItemMeta(meta);
@@ -352,33 +326,38 @@ public class RemoteSmelter extends JavaPlugin implements Listener, CommandExecut
     }
 
     private void openConfigGUI(Player player) {
-        Inventory gui = Bukkit.createInventory(null, 27, ChatColor.DARK_PURPLE + "RemoteSmelter Config");
+        Inventory gui = Bukkit.createInventory(null, 27, messageManager.getMessage("commands.config.gui-title"));
 
         ItemStack economyItem = new ItemStack(Material.GOLD_INGOT);
         ItemMeta economyMeta = economyItem.getItemMeta();
-        economyMeta.setDisplayName(ChatColor.GOLD + "Economy Settings");
+        economyMeta.setDisplayName(messageManager.getMessage("gui.economy.title"));
+
+        String enabledStatus = useEconomy ?
+                messageManager.getMessage("gui.economy.enabled-yes") :
+                messageManager.getMessage("gui.economy.enabled-no");
+
         economyMeta.setLore(Arrays.asList(
-                ChatColor.GRAY + "Enabled: " + (useEconomy ? ChatColor.GREEN + "Yes" : ChatColor.RED + "No"),
-                ChatColor.GRAY + "Cost: " + ChatColor.GOLD + "$" + smelterCost,
+                messageManager.getMessage("gui.economy.enabled", "{STATUS}", enabledStatus),
+                messageManager.getMessage("gui.economy.cost", "{COST}", String.valueOf(smelterCost)),
                 "",
-                ChatColor.YELLOW + "Click to toggle",
-                ChatColor.YELLOW + "Right-click to set cost"
+                messageManager.getMessage("gui.economy.click-toggle"),
+                messageManager.getMessage("gui.economy.right-click-cost")
         ));
         economyItem.setItemMeta(economyMeta);
 
         ItemStack groupsItem = new ItemStack(Material.PLAYER_HEAD);
         ItemMeta groupsMeta = groupsItem.getItemMeta();
-        groupsMeta.setDisplayName(ChatColor.AQUA + "Group Limits");
+        groupsMeta.setDisplayName(messageManager.getMessage("gui.groups.title"));
         groupsMeta.setLore(Arrays.asList(
-                ChatColor.GRAY + "Manage group limits",
+                messageManager.getMessage("gui.groups.description"),
                 "",
-                ChatColor.YELLOW + "Click to open"
+                messageManager.getMessage("gui.groups.click-open")
         ));
         groupsItem.setItemMeta(groupsMeta);
 
         ItemStack saveItem = new ItemStack(Material.EMERALD);
         ItemMeta saveMeta = saveItem.getItemMeta();
-        saveMeta.setDisplayName(ChatColor.GREEN + "Save Configuration");
+        saveMeta.setDisplayName(messageManager.getMessage("gui.save.title"));
         saveItem.setItemMeta(saveMeta);
 
         gui.setItem(11, economyItem);
@@ -389,20 +368,24 @@ public class RemoteSmelter extends JavaPlugin implements Listener, CommandExecut
     }
 
     private void openGroupsGUI(Player player) {
-        Inventory gui = Bukkit.createInventory(null, 54, ChatColor.DARK_AQUA + "Group Limits");
+        Inventory gui = Bukkit.createInventory(null, 54, messageManager.getMessage("commands.config.groups-gui-title"));
 
         int slot = 0;
         for (Map.Entry<String, Integer> entry : groupLimits.entrySet()) {
             ItemStack item = new ItemStack(Material.NAME_TAG);
             ItemMeta meta = item.getItemMeta();
             meta.setDisplayName(ChatColor.AQUA + entry.getKey());
+
+            String limitText = entry.getValue() == -1 ?
+                    messageManager.getMessage("gui.groups.limit-unlimited") :
+                    ChatColor.YELLOW + String.valueOf(entry.getValue());
+
             meta.setLore(Arrays.asList(
-                    ChatColor.GRAY + "Limit: " + (entry.getValue() == -1 ? ChatColor.GREEN + "Unlimited" :
-                            ChatColor.YELLOW + String.valueOf(entry.getValue())),
+                    messageManager.getMessage("gui.groups.limit", "{LIMIT}", limitText),
                     "",
-                    ChatColor.YELLOW + "Left-click to increase",
-                    ChatColor.YELLOW + "Right-click to decrease",
-                    ChatColor.RED + "Shift-click to delete"
+                    messageManager.getMessage("gui.groups.left-increase"),
+                    messageManager.getMessage("gui.groups.right-decrease"),
+                    messageManager.getMessage("gui.groups.shift-delete")
             ));
             item.setItemMeta(meta);
             gui.setItem(slot++, item);
@@ -410,7 +393,7 @@ public class RemoteSmelter extends JavaPlugin implements Listener, CommandExecut
 
         ItemStack addItem = new ItemStack(Material.EMERALD);
         ItemMeta addMeta = addItem.getItemMeta();
-        addMeta.setDisplayName(ChatColor.GREEN + "Add New Group");
+        addMeta.setDisplayName(messageManager.getMessage("gui.groups.add-new"));
         addItem.setItemMeta(addMeta);
         gui.setItem(53, addItem);
 
@@ -424,7 +407,7 @@ public class RemoteSmelter extends JavaPlugin implements Listener, CommandExecut
 
         String title = event.getView().getTitle();
 
-        if (title.equals(ChatColor.DARK_GREEN + "Your Smelters")) {
+        if (title.equals(messageManager.getMessage("commands.view.gui-title"))) {
             event.setCancelled(true);
 
             if (event.getCurrentItem() == null || !event.getCurrentItem().hasItemMeta()) return;
@@ -435,19 +418,20 @@ public class RemoteSmelter extends JavaPlugin implements Listener, CommandExecut
             if (smelters == null || !smelters.containsKey(name)) return;
 
             if (event.isShiftClick()) {
-                smelters.remove(name);
-                player.sendMessage(ChatColor.RED + "Smelter '" + name + "' deleted!");
-                player.closeInventory();
-                saveSmelters();
+                if (databaseManager.removeSmelter(player.getUniqueId(), name)) {
+                    smelters.remove(name);
+                    messageManager.sendMessage(player, "smelter.deleted", "{NAME}", name);
+                    player.closeInventory();
+                }
             } else {
                 SmelterData data = smelters.get(name);
                 Block block = data.location.getBlock();
 
                 if (!(block.getState() instanceof Furnace)) {
-                    player.sendMessage(ChatColor.RED + "The furnace no longer exists!");
+                    messageManager.sendMessage(player, "smelter.not-exists");
+                    databaseManager.removeSmelter(player.getUniqueId(), name);
                     smelters.remove(name);
                     player.closeInventory();
-                    saveSmelters();
                     return;
                 }
 
@@ -456,27 +440,28 @@ public class RemoteSmelter extends JavaPlugin implements Listener, CommandExecut
                 player.openInventory(furnace.getInventory());
                 viewingPlayer.put(player.getUniqueId(), name);
             }
-        } else if (title.equals(ChatColor.DARK_PURPLE + "RemoteSmelter Config")) {
+        } else if (title.equals(messageManager.getMessage("commands.config.gui-title"))) {
             event.setCancelled(true);
 
             if (event.getSlot() == 11) {
                 if (event.isLeftClick()) {
                     useEconomy = !useEconomy;
-                    player.sendMessage(ChatColor.GREEN + "Economy " + (useEconomy ? "enabled" : "disabled") + "!");
+                    String status = useEconomy ? "enabled" : "disabled";
+                    player.sendMessage(ChatColor.GREEN + "Economy " + status + "!");
                     openConfigGUI(player);
                 } else if (event.isRightClick()) {
                     player.closeInventory();
                     settingCost.add(player.getUniqueId());
-                    player.sendMessage(ChatColor.GREEN + "Type the new smelter cost in chat (current: $" + smelterCost + "):");
+                    messageManager.sendMessage(player, "commands.config.set-cost-prompt", "{COST}", String.valueOf(smelterCost));
                 }
             } else if (event.getSlot() == 13) {
                 openGroupsGUI(player);
             } else if (event.getSlot() == 15) {
                 saveConfiguration();
-                player.sendMessage(ChatColor.GREEN + "Configuration saved!");
+                messageManager.sendMessage(player, "commands.config.saved");
                 player.closeInventory();
             }
-        } else if (title.equals(ChatColor.DARK_AQUA + "Group Limits")) {
+        } else if (title.equals(messageManager.getMessage("commands.config.groups-gui-title"))) {
             event.setCancelled(true);
 
             if (event.getCurrentItem() == null || !event.getCurrentItem().hasItemMeta()) return;
@@ -484,7 +469,7 @@ public class RemoteSmelter extends JavaPlugin implements Listener, CommandExecut
             if (event.getSlot() == 53) {
                 player.closeInventory();
                 addingGroup.add(player.getUniqueId());
-                player.sendMessage(ChatColor.GREEN + "Type the name of the new group in chat:");
+                messageManager.sendMessage(player, "commands.config.add-group-prompt");
                 return;
             }
 
@@ -532,19 +517,19 @@ public class RemoteSmelter extends JavaPlugin implements Listener, CommandExecut
             String groupName = event.getMessage().trim().toLowerCase();
 
             if (groupName.isEmpty()) {
-                player.sendMessage(ChatColor.RED + "Group name cannot be empty!");
+                messageManager.sendMessage(player, "commands.config.group-name-empty");
                 return;
             }
 
             if (groupLimits.containsKey(groupName)) {
-                player.sendMessage(ChatColor.RED + "Group already exists!");
+                messageManager.sendMessage(player, "commands.config.group-exists");
                 return;
             }
 
             groupLimits.put(groupName, 5);
 
             Bukkit.getScheduler().runTask(this, () -> {
-                player.sendMessage(ChatColor.GREEN + "Group '" + groupName + "' created with limit 5!");
+                messageManager.sendMessage(player, "commands.config.group-created", "{NAME}", groupName);
                 openGroupsGUI(player);
             });
         } else if (settingCost.contains(uuid)) {
@@ -555,18 +540,18 @@ public class RemoteSmelter extends JavaPlugin implements Listener, CommandExecut
                 double newCost = Double.parseDouble(event.getMessage().trim());
 
                 if (newCost < 0) {
-                    player.sendMessage(ChatColor.RED + "Cost cannot be negative!");
+                    messageManager.sendMessage(player, "commands.config.cost-negative");
                     return;
                 }
 
                 smelterCost = newCost;
 
                 Bukkit.getScheduler().runTask(this, () -> {
-                    player.sendMessage(ChatColor.GREEN + "Smelter cost set to $" + smelterCost);
+                    messageManager.sendMessage(player, "commands.config.cost-set", "{COST}", String.valueOf(smelterCost));
                     openConfigGUI(player);
                 });
             } catch (NumberFormatException e) {
-                player.sendMessage(ChatColor.RED + "Invalid number! Please enter a valid cost.");
+                messageManager.sendMessage(player, "commands.config.invalid-number");
             }
         }
     }
@@ -582,20 +567,22 @@ public class RemoteSmelter extends JavaPlugin implements Listener, CommandExecut
     @EventHandler
     public void onBlockBreak(BlockBreakEvent event) {
         Location loc = event.getBlock().getLocation();
+        Map.Entry<UUID, String> owner = databaseManager.getSmelterOwner(loc);
 
-        for (Map.Entry<UUID, Map<String, SmelterData>> entry : playerSmelters.entrySet()) {
-            Iterator<Map.Entry<String, SmelterData>> iter = entry.getValue().entrySet().iterator();
-            while (iter.hasNext()) {
-                Map.Entry<String, SmelterData> smelterEntry = iter.next();
-                if (smelterEntry.getValue().location.equals(loc)) {
-                    iter.remove();
-                    Player owner = Bukkit.getPlayer(entry.getKey());
-                    if (owner != null && owner.isOnline()) {
-                        owner.sendMessage(ChatColor.RED + "Your smelter '" + smelterEntry.getKey() + "' has been destroyed!");
-                    }
-                    saveSmelters();
-                    return;
-                }
+        if (owner != null) {
+            UUID ownerUUID = owner.getKey();
+            String smelterName = owner.getValue();
+
+            Map<String, SmelterData> smelters = playerSmelters.get(ownerUUID);
+            if (smelters != null) {
+                smelters.remove(smelterName);
+            }
+
+            databaseManager.removeSmelterByLocation(loc);
+
+            Player ownerPlayer = Bukkit.getPlayer(ownerUUID);
+            if (ownerPlayer != null && ownerPlayer.isOnline()) {
+                messageManager.sendMessage(ownerPlayer, "smelter.destroyed", "{NAME}", smelterName);
             }
         }
     }
@@ -614,11 +601,11 @@ public class RemoteSmelter extends JavaPlugin implements Listener, CommandExecut
         }
     }
 
-    private static class SmelterData {
+    public static class SmelterData {
         final String name;
         final Location location;
 
-        SmelterData(String name, Location location) {
+        public SmelterData(String name, Location location) {
             this.name = name;
             this.location = location;
         }
